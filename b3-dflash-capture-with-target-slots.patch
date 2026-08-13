@@ -1,0 +1,19 @@
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -5717,9 +5717,15 @@
+                 # Therefore only use cudagraphs if the main model uses PIECEWISE
+                 # NOTE(lucas): this is a hack, need to clean up.
+                 use_cudagraphs = (
+                     (
+                         is_graph_capturing
+-                        and cudagraph_runtime_mode == CUDAGraphMode.PIECEWISE
++                        and (
++                            cudagraph_runtime_mode == CUDAGraphMode.PIECEWISE
++                            or (
++                                isinstance(self.drafter, DFlashProposer)
++                                and cudagraph_runtime_mode == CUDAGraphMode.FULL
++                            )
++                        )
+                     )
+                     or (
+                         not is_graph_capturing

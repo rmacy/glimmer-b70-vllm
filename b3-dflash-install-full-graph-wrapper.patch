@@ -1,0 +1,39 @@
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -5092,4 +5092,23 @@
+                     self.model, self.vllm_config, CUDAGraphMode.NONE, self.device
+                 )
+ 
++        # DFlash is loaded separately from the target, so it does not pass
++        # through the target-only full-graph wrapper installation above. Its
++        # one-pass proposal shape is fixed (batch * 16 for Muse Glimmer), and
++        # the proposer owns stable input/slot-mapping buffers. Install the same
++        # outer FULL wrapper on the assistant backbone so runtime FULL
++        # dispatch captures/replays QKV, attention, MLP, and TP collectives as
++        # one XPU command graph. Passing use_cudagraphs=False still dispatches
++        # NONE for multimodal requests and bypasses this wrapper.
++        if isinstance(getattr(self, "drafter", None), DFlashProposer):
++            drafter_model = self.drafter.model
++            dflash_backbone = drafter_model.model
++            if not isinstance(dflash_backbone, CUDAGraphWrapper):
++                draft_vllm_config = dflash_backbone.vllm_config
++                drafter_model._full_graph_backbone = CUDAGraphWrapper(
++                    dflash_backbone,
++                    draft_vllm_config,
++                    runtime_mode=CUDAGraphMode.FULL,
++                )
++
+         get_offloader().post_init()
+
+--- a/vllm/model_executor/models/qwen3_dflash.py
++++ b/vllm/model_executor/models/qwen3_dflash.py
+@@ -724,7 +724,8 @@
+         positions: torch.Tensor,
+         inputs_embeds: torch.Tensor | None = None,
+     ) -> torch.Tensor:
+-        return self.model(input_ids, positions, inputs_embeds)
++        backbone = getattr(self, "_full_graph_backbone", self.model)
++        return backbone(input_ids, positions, inputs_embeds)
+ 
+     def compute_logits(
+         self,

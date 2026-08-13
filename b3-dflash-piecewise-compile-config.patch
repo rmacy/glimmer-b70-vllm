@@ -1,0 +1,22 @@
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -7,7 +7,7 @@
+ import torch
+ from typing_extensions import override
+ 
+-from vllm.config import VllmConfig, replace
++from vllm.config import CUDAGraphMode, VllmConfig, replace
+ from vllm.forward_context import set_forward_context
+ from vllm.logger import init_logger
+ from vllm.triton_utils import triton
+@@ -203,6 +203,10 @@ class DFlashProposer(SpecDecodeBaseProposer):
+         base = super()._create_draft_vllm_config()
+         return replace(
+             base,
++            compilation_config=replace(
++                base.compilation_config,
++                cudagraph_mode=CUDAGraphMode.PIECEWISE,
++            ),
+             attention_config=replace(
+                 base.attention_config,
+                 use_non_causal=True,

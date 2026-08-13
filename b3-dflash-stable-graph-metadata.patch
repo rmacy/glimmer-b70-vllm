@@ -1,0 +1,33 @@
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -69,6 +69,14 @@
+             dtype=torch.int64,
+             device=device,
+         )
++        # The outer FULL graph records the addresses of tensors referenced by
++        # FlashAttention metadata.  DFlash used to allocate a fresh seq_lens
++        # result for every proposal, so replay kept reading the values from
++        # the capture iteration.  Keep this metadata in a proposer-owned
++        # buffer and update it in place before every proposal.
++        self._seq_lens_buffer = torch.zeros(
++            self.max_batch_size, dtype=torch.int32, device=device
++        )
+ 
+         self.arange = torch.arange(
+             self.max_positions + 1, device=device, dtype=torch.int32
+@@ -351,12 +359,14 @@
+         # In padded mode, cad.seq_lens includes rejected tokens. Subtract
+         # them so attention only sees the valid prefix of context states.
+         effective_seq_lens = cad.seq_lens
+         if has_num_rejected:
+             effective_seq_lens = effective_seq_lens - num_rejected_tokens_gpu
++        proposal_seq_lens = self._seq_lens_buffer[:batch_size]
++        torch.add(effective_seq_lens, num_query_per_req, out=proposal_seq_lens)
+ 
+         new_cad = CommonAttentionMetadata(
+             query_start_loc=new_query_start_loc,
+-            seq_lens=effective_seq_lens + num_query_per_req,
++            seq_lens=proposal_seq_lens,
+             query_start_loc_cpu=(
+                 torch.from_numpy(self.token_arange_np[: batch_size + 1]).clone()
+                 * num_query_per_req

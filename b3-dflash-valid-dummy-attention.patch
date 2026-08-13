@@ -1,0 +1,84 @@
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -366,13 +366,4 @@
+-        # max_seq_len is a Python launch bound captured by the command graph.
+-        # Bucket it by the official 2,048-token DFlash window so every replay
+-        # in a bucket has the same bound while seq_lens carries the exact live
+-        # length.  A later context bucket gets its own graph key.
+-        graph_seq_bucket = int(
+-            getattr(self.draft_model_config.hf_config, "sliding_window", 2048)
+-            or 2048
+-        )
+-        proposal_max_seq_len = min(
+-            self.max_model_len,
+-            ((cad.max_seq_len + num_query_per_req + graph_seq_bucket - 1)
+-             // graph_seq_bucket) * graph_seq_bucket,
+-        )
++        # FULL command graphs capture this Python launch bound.  Use the
++        # native model ceiling for both startup capture and every live replay;
++        # exact live lengths remain in proposal_seq_lens below.
++        proposal_max_seq_len = self.max_model_len
+@@ -453,4 +444,62 @@
+         self.model.precompute_and_store_context_kv(context_states, context_positions)
++
++        if not is_graph_capturing:
++            # Memory profiling runs before draft KV block tables exist.  Keep
++            # its original zero-attention behavior; it is never replayed.
++            with set_forward_context(
++                None,
++                self.vllm_config,
++                num_tokens=num_input_tokens,
++                num_tokens_across_dp=num_tokens_across_dp,
++                cudagraph_runtime_mode=CUDAGraphMode.NONE,
++                slot_mapping=slot_mapping_dict,
++            ):
++                self.model(
++                    input_ids=self.input_ids[:num_input_tokens],
++                    positions=self._get_positions(num_input_tokens),
++                    inputs_embeds=None,
++                )
++            return
++
++        slot_mapping_dict = self._get_slot_mapping(num_input_tokens)
++        # Capture the same attention operator path used by live DFlash.  The
++        # previous None metadata made every attention layer return zeros during
++        # startup capture, baking a constant-token proposal into the graph.
++        self._ensure_slot_mapping_buffers()
++        draft_kv_group_ids = self._draft_kv_gids()
++        primary_kv_cache_gid = draft_kv_group_ids[0]
++        if primary_kv_cache_gid not in self._draft_block_tables:
++            raise RuntimeError(
++                "DFlash graph capture requires the target block table for KV "
++                f"group {primary_kv_cache_gid}"
++            )
++        for context_slots, query_slots in self._slot_mapping_buffers_by_gid.values():
++            context_slots.fill_(-1)
++            query_slots.fill_(-1)
++
++        dummy_batch_size = 1
++        dummy_query_start_loc = self._query_start_loc_buffer[:2]
++        dummy_query_start_loc[0] = 0
++        dummy_query_start_loc[1] = num_input_tokens
++        dummy_seq_lens = self._seq_lens_buffer[:dummy_batch_size]
++        dummy_seq_lens.fill_(num_input_tokens)
++        dummy_common_attn_metadata = CommonAttentionMetadata(
++            query_start_loc=dummy_query_start_loc,
++            query_start_loc_cpu=torch.tensor([0, num_input_tokens], dtype=torch.int32),
++            seq_lens=dummy_seq_lens,
++            num_reqs=dummy_batch_size,
++            num_actual_tokens=num_input_tokens,
++            max_query_len=num_input_tokens,
++            max_seq_len=self.max_model_len,
++            block_table_tensor=self._draft_block_tables[primary_kv_cache_gid],
++            slot_mapping=self._slot_mapping_buffers_by_gid[
++                primary_kv_cache_gid
++            ][1][:num_input_tokens],
++            causal=False,
++        )
++        _, dummy_per_layer_attn_metadata = (
++            self.build_per_group_and_layer_attn_metadata(dummy_common_attn_metadata)
++        )
+         with set_forward_context(
+-            None,
++            dummy_per_layer_attn_metadata,
+             self.vllm_config,

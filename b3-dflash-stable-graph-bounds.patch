@@ -1,0 +1,48 @@
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -83,6 +83,9 @@
+         self.arange = torch.arange(
+             self.max_positions + 1, device=device, dtype=torch.int32
+         )
++        self._query_start_loc_buffer = torch.zeros(
++            self.max_batch_size + 1, dtype=torch.int32, device=device
++        )
+ 
+         # DFlash embeds mask tokens directly.
+         self.parallel_drafting_hidden_state_tensor = None
+@@ -357,7 +361,25 @@
+         query_slot_mapping = self._slot_mapping_buffers_by_gid[primary_kv_cache_gid][
+             1
+         ][:num_query_total]
+-        new_query_start_loc = self.arange[: batch_size + 1] * num_query_per_req
++        new_query_start_loc = self._query_start_loc_buffer[: batch_size + 1]
++        torch.mul(
++            self.arange[: batch_size + 1],
++            num_query_per_req,
++            out=new_query_start_loc,
++        )
++        # max_seq_len is a Python launch bound captured by the command graph.
++        # Bucket it by the official 2,048-token DFlash window so every replay
++        # in a bucket has the same bound while seq_lens carries the exact live
++        # length.  A later context bucket gets its own graph key.
++        graph_seq_bucket = int(
++            getattr(self.draft_model_config.hf_config, "sliding_window", 2048)
++            or 2048
++        )
++        proposal_max_seq_len = min(
++            self.max_model_len,
++            ((cad.max_seq_len + num_query_per_req + graph_seq_bucket - 1)
++             // graph_seq_bucket) * graph_seq_bucket,
++        )
+ 
+         # In padded mode, cad.seq_lens includes rejected tokens. Subtract
+         # them so attention only sees the valid prefix of context states.
+@@ -379,7 +394,7 @@
+             num_reqs=cad.num_reqs,
+             num_actual_tokens=num_query_total,
+             max_query_len=num_query_per_req,
+-            max_seq_len=cad.max_seq_len + num_query_per_req,
++            max_seq_len=proposal_max_seq_len,
+             block_table_tensor=self._get_dflash_block_table(primary_kv_cache_gid, cad),
+             slot_mapping=query_slot_mapping,
+             causal=False,  # Non-causal attention is required for DFlash

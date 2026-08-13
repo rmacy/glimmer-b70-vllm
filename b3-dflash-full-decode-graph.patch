@@ -1,0 +1,14 @@
+--- a/vllm/v1/spec_decode/llm_base_proposer.py
++++ b/vllm/v1/spec_decode/llm_base_proposer.py
+@@ -399,4 +399,4 @@
+             # DFlash has a fixed one-pass query block and its own dispatcher.
+-            # Keep PIECEWISE graph keys even when the target deliberately uses
++            # Keep a separate FULL graph key even when the target deliberately uses
+             # FULL_DECODE_ONLY so long-context target prefills remain eager.
+-            eagle_cudagraph_mode = CUDAGraphMode.PIECEWISE
++            eagle_cudagraph_mode = CUDAGraphMode.FULL
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -170 +170 @@
+-            cudagraph_mode=CUDAGraphMode.PIECEWISE,
++            cudagraph_mode=CUDAGraphMode.FULL,

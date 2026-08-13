@@ -1,0 +1,18 @@
+--- a/vllm/model_executor/models/qwen3_dflash.py
++++ b/vllm/model_executor/models/qwen3_dflash.py
+@@ -747,3 +747,15 @@
+         return logits_new
+ 
++    def get_top_tokens(
++        self,
++        hidden_states: torch.Tensor,
++    ) -> torch.Tensor:
++        """Return the exact global argmax without gathering full logits."""
++        top = self.logits_processor.get_top_tokens(
++            self.lm_head, hidden_states
++        )
++        if self.draft_id_to_target_id is not None:
++            top = top + self.draft_id_to_target_id[top]
++        return top
++
+     def precompute_and_store_context_kv(

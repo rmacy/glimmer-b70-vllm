@@ -1,0 +1,20 @@
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -4881,9 +4881,14 @@
+             # dispatcher, so it must also remain eager for the full lifetime of
+             # an active multimodal request.  This does not change DFlash model
+             # inputs or attention semantics.
+-            use_drafter_cudagraphs = not (
+-                isinstance(self.drafter, DFlashProposer)
+-                and any(
++            is_dflash = isinstance(self.drafter, DFlashProposer)
++            use_drafter_cudagraphs = not is_dflash or (
++                # The first pass both populates long-context DFlash K/V and
++                # constructs cache metadata with dynamic context extents.
++                # Run that initialization eagerly; graph replay starts only
++                # after speculative metadata proves steady-state decode.
++                spec_decode_metadata is not None
++                and not any(
+                     bool(self.requests[req_id].mm_features)
+                     for req_id in self.input_batch.req_ids
+                 )

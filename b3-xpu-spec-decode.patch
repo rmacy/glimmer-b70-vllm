@@ -1,0 +1,130 @@
+--- a/vllm_xpu_kernels/flash_attn_interface.py
++++ b/vllm_xpu_kernels/flash_attn_interface.py
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: Apache-2.0
++import os
+ from typing import Optional
+ 
+ import torch
+@@ -17,6 +18,80 @@
+ DEFAULT_FA_VERSION = 2
+ 
+ 
++# Small speculative verification batches otherwise use the chunk-prefill
++# kernel, which has no split-K parallelism across a long KV cache.  This is
++# the current upstream Intel XPU exact route: represent every causal query
++# position as one q_len=1 paged-decode sequence with an adjusted KV length.
++try:
++    _SPEC_DECODE_MAX_QLEN = int(
++        os.environ.get("VLLM_XPU_SPEC_DECODE_MAX_QLEN", "16")
++    )
++except ValueError:
++    _SPEC_DECODE_MAX_QLEN = 16
++
++
++def _spec_decode_varlen_fwd(
++    q,
++    k,
++    v,
++    out,
++    cu_seqlens_q,
++    seqused_k,
++    block_table,
++    max_seqlen_k,
++    k_descale,
++    v_descale,
++    softmax_scale,
++    s_aux,
++    window_size,
++    softcap,
++):
++    batch = cu_seqlens_q.numel() - 1
++    q_len = q.shape[0] // batch
++    total = q.shape[0]
++    cu_seqlens_q_spec = torch.arange(
++        total + 1, dtype=torch.int32, device=q.device
++    )
++    dummy_cu_seqlens_k = torch.zeros_like(cu_seqlens_q_spec)
++    pos = torch.arange(q_len, device=q.device, dtype=seqused_k.dtype)
++    seqused_k_spec = (
++        seqused_k.view(batch, 1)
++        - (q_len - 1 - pos).view(1, q_len)
++    ).clamp_(min=1).reshape(total).to(torch.int32)
++    block_table_spec = block_table.repeat_interleave(q_len, dim=0)
++
++    out, _ = torch.ops._vllm_fa2_C.varlen_fwd(
++        q,
++        k,
++        v,
++        out,
++        cu_seqlens_q_spec,
++        dummy_cu_seqlens_k,
++        seqused_k_spec,
++        None,
++        block_table_spec,
++        None,
++        1,
++        max_seqlen_k,
++        0.0,
++        k_descale,
++        v_descale,
++        softmax_scale,
++        s_aux,
++        False,
++        False,
++        window_size[0],
++        window_size[1],
++        softcap,
++        False,
++        None,
++        None,
++        False,
++        None,
++    )
++    return out
++
++
+ def maybe_contiguous(x):
+     return x.contiguous() if x is not None and x.stride(-1) != 1 else x
+ 
+@@ -124,6 +199,40 @@
+                                            and v_descale is not None):
+             raise NotImplementedError(
+                 "FA2 only supports both KV cache descaled")
++        batch = cu_seqlens_q.numel() - 1
++        is_uniform_qlen = (
++            batch > 0 and q.shape[0] == batch * max_seqlen_q
++        )
++        if (
++            block_table is not None
++            and causal
++            and not return_softmax_lse
++            and softcap == 0.0
++            and alibi_slopes is None
++            and q_v is None
++            and q_descale is None
++            and scheduler_metadata is None
++            and seqused_k is not None
++            and 1 < max_seqlen_q <= _SPEC_DECODE_MAX_QLEN
++            and is_uniform_qlen
++        ):
++            return _spec_decode_varlen_fwd(
++                q,
++                k,
++                v,
++                out,
++                cu_seqlens_q,
++                seqused_k,
++                block_table,
++                max_seqlen_k,
++                k_descale,
++                v_descale,
++                softmax_scale,
++                s_aux,
++                real_window_size,
++                softcap,
++            )
++
+         out, softmax_lse = torch.ops._vllm_fa2_C.varlen_fwd(
+             q,
+             k,

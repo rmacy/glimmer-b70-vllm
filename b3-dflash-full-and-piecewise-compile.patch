@@ -1,0 +1,5 @@
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -170 +170 @@
+-            cudagraph_mode=CUDAGraphMode.FULL,
++            cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE,

@@ -1,0 +1,63 @@
+name: Publish GHCR image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+
+      - name: Select version
+        id: version
+        shell: bash
+        run: |
+          value="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            value="0.1.0"
+          fi
+          printf 'value=%s\n' "${value}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.b3-glimmer-one
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/glimmer-b70-vllm:${{ steps.version.outputs.value }}
+            ghcr.io/${{ github.repository_owner }}/glimmer-b70-vllm:latest
+          provenance: false
+          sbom: false
+
+      - name: Make the package public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if gh api \
+              --method PATCH \
+              /user/packages/container/glimmer-b70-vllm \
+              -f visibility=public; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1

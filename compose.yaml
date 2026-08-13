@@ -1,0 +1,33 @@
+services:
+  glimmer:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/glimmer-b70-vllm:${GLIMMER_TAG:-0.1.0}
+    container_name: muse-glimmer
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - /dev/dri/by-path:/dev/dri/by-path:ro
+      - ${MODEL_ROOT:-./models}:/models:ro
+      - glimmer-cache:/root/.cache/vllm
+    ipc: host
+    shm_size: 32gb
+    ports:
+      - "8000:8000"
+    environment:
+      ZE_AFFINITY_MASK: "0,1"
+      WEIGHT_PRECISION: fp8
+      TP_SIZE: "2"
+      GPU_UTIL: "0.72"
+      MAX_MODEL_LEN: "131072"
+      MAX_BATCHED_TOKENS: "4096"
+      MAX_NUM_SEQS: "1"
+      BLOCK_SIZE: "64"
+      ENFORCE_EAGER: "0"
+      VLLM_XPU_ENABLE_XPU_GRAPH: "1"
+      VLLM_MUSE_DFLASH_BF16_FC: "1"
+      DISABLE_ESIMD_GEMV: "1"
+      DISABLE_ESIMD_GEMM: "1"
+
+volumes:
+  glimmer-cache:
+

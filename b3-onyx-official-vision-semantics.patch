@@ -1,0 +1,110 @@
+--- a/vllm/model_executor/models/onyx_mm.py
++++ b/vllm/model_executor/models/onyx_mm.py
+@@ -33,6 +33,9 @@
+ import torch.nn.functional as F
+ from torch import nn
+ from transformers import BatchFeature
++from transformers.models.muse_glimmer.modeling_muse_glimmer import (
++    get_vision_bilinear_indices_and_weights,
++)
+ 
+ from vllm.config import VllmConfig
+ from vllm.config.multimodal import BaseDummyOptions
+@@ -100,13 +101,24 @@
+ # --------------------------------------------------------------------------- #
+ 
+ 
+-def _apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+-    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+-    freqs = freqs_cis.unsqueeze(0).unsqueeze(2)
+-    x_out = torch.view_as_real(x_complex * freqs).flatten(-2)
+-    return x_out.to(x.dtype)
++def _rotate_half(x: torch.Tensor) -> torch.Tensor:
++    x1 = x[..., : x.shape[-1] // 2]
++    x2 = x[..., x.shape[-1] // 2 :]
++    return torch.cat((-x2, x1), dim=-1)
+ 
+ 
++def _apply_rotary_emb(
++    x: torch.Tensor,
++    position_embeddings: tuple[torch.Tensor, torch.Tensor],
++) -> torch.Tensor:
++    original_dtype = x.dtype
++    cos, sin = position_embeddings
++    cos = cos.unsqueeze(0).unsqueeze(2).float()
++    sin = sin.unsqueeze(0).unsqueeze(2).float()
++    x = x.float()
++    return ((x * cos) + (_rotate_half(x) * sin)).to(original_dtype)
++
++
+ class OnyxVisionAttention(nn.Module):
+     def __init__(self, dim: int, n_heads: int, head_dim: int):
+         super().__init__()
+@@ -198,13 +210,14 @@
+         self.ln_post = nn.LayerNorm(latent_dim)
+ 
+     def _make_2d_rope(self, grid_h, grid_w, device):
+-        half_dim = self.head_dim // 2
+-        quarter = half_dim // 2
++        spatial_dim = self.head_dim // 2
+         theta = 10000.0
+         inv_freq = 1.0 / (
+-            theta ** (torch.arange(0, half_dim, 2, dtype=torch.float32, device=device)[
+-                :quarter
+-            ] / half_dim)
++            theta
++            ** (
++                torch.arange(0, spatial_dim, 2, dtype=torch.float32, device=device)
++                / spatial_dim
++            )
+         )
+         idx_h = torch.arange(1, grid_h + 1, dtype=torch.float32, device=device)
+         idx_w = torch.arange(1, grid_w + 1, dtype=torch.float32, device=device)
+@@ -212,27 +225,23 @@
+         idx_ij_w = idx_w.unsqueeze(0).expand(grid_h, -1).reshape(-1)
+         freq_h = torch.outer(idx_ij_h, inv_freq)
+         freq_w = torch.outer(idx_ij_w, inv_freq)
+-        freq = torch.cat([freq_w, freq_h], dim=-1)
+-        return torch.view_as_complex(
+-            torch.stack([torch.cos(freq), torch.sin(freq)], dim=-1)
+-        )
++        freq = torch.cat([freq_w, freq_h, freq_w, freq_h], dim=-1)
++        return torch.cos(freq), torch.sin(freq)
+ 
+     def _get_pos_emb(self, grid_h, grid_w, device):
+-        dtype = self.positional_embedding_vlm.dtype
+-        pos_emb = (
+-            self.positional_embedding_vlm.view(
+-                self.pos_emb_grid_h, self.pos_emb_grid_w, self.latent_dim
+-            ).permute(2, 0, 1).unsqueeze(0)
++        grid_thw = torch.tensor([[1, grid_h, grid_w]], device=device)
++        bilinear_indices, bilinear_weights = (
++            get_vision_bilinear_indices_and_weights(
++                grid_thw,
++                num_grid_per_side=self.pos_emb_grid_h,
++                spatial_merge_size=1,
++                kwargs={},
++            )
+         )
+-        inv_h = 1.0 / grid_h
+-        inv_w = 1.0 / grid_w
+-        ys = torch.linspace(-1 + inv_h, 1 - inv_h, grid_h, device=device, dtype=dtype)
+-        xs = torch.linspace(-1 + inv_w, 1 - inv_w, grid_w, device=device, dtype=dtype)
+-        pos_xy = torch.stack(torch.meshgrid(ys, xs, indexing="xy"), dim=-1).reshape(
+-            -1, 2
+-        )[None, None]
+-        sampled = F.grid_sample(pos_emb, pos_xy, mode="bilinear", align_corners=False)
+-        return sampled[0, :, 0, :].T
++        return (
++            self.positional_embedding_vlm[bilinear_indices]
++            * bilinear_weights[:, :, None]
++        ).sum(0)
+ 
+     def _pixel_shuffle_downsample(self, x, grid_h, grid_w):
+         f = self.downsample_factor
+@@ -319,7 +328,7 @@
+         if sf > 1:
+             sp_perm, sp_slens = self._get_sparse_perm_and_mask(grid_h, grid_w, device)
+             x = x[:, sp_perm]
+-            freqs_cis = freqs_cis[sp_perm]
++            freqs_cis = tuple(freqs[sp_perm] for freqs in freqs_cis)

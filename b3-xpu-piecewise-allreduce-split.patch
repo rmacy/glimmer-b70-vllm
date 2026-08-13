@@ -1,0 +1,9 @@
+--- a/vllm/platforms/xpu.py
++++ b/vllm/platforms/xpu.py
+@@ -289,6 +290,7 @@ class XPUPlatform(Platform):
+             ) or compilation_config.mode == CompilationMode.VLLM_COMPILE:
+                 _esimd_moe_splits = [
++                    "vllm::all_reduce",
+                     "moe_ops::moe_router_forward",
+                     "moe_ops::moe_forward_full",
+                     "moe_ops::moe_forward_full_v2",

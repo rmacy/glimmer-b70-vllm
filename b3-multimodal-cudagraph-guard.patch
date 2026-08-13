@@ -1,0 +1,73 @@
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -3964,6 +3964,16 @@
+                     scheduler_output.num_common_prefix_blocks,
+                 )
+ 
++            # Decoder-only multimodal models keep encoder features on the
++            # request after the encoder work has completed.  A check limited to
++            # scheduled_encoder_inputs therefore protects only the prefill and
++            # can incorrectly send later multimodal decode steps through a FULL
++            # graph captured for text-only inputs.  Keep the whole lifetime of
++            # every active multimodal request eager.
++            has_multimodal_request = any(
++                bool(self.requests[req_id].mm_features) for req_id in req_ids
++            )
++
+             (
+                 cudagraph_mode,
+                 batch_desc,
+@@ -3979,5 +3989,6 @@
+                 use_cascade_attn=cascade_attn_prefix_lens is not None,
+                 num_encoder_reqs=len(scheduler_output.scheduled_encoder_inputs),
++                force_eager=has_multimodal_request,
+             )
+ 
+             logger.debug(
+@@ -4852,6 +4863,17 @@
+             else:
+                 mm_embed_inputs = None
+ 
++            # Match target execution: DFlash has an independent graph
++            # dispatcher, so it must also remain eager for the full lifetime of
++            # an active multimodal request.  This does not change DFlash model
++            # inputs or attention semantics.
++            use_drafter_cudagraphs = not (
++                isinstance(self.drafter, DFlashProposer)
++                and any(
++                    bool(self.requests[req_id].mm_features)
++                    for req_id in self.input_batch.req_ids
++                )
++            )
+             draft_token_ids = self.drafter.propose(
+                 target_token_ids=target_token_ids,
+                 target_positions=target_positions,
+@@ -4864,6 +4886,7 @@
+                 mm_embed_inputs=mm_embed_inputs,
+                 num_rejected_tokens_gpu=num_rejected_tokens_gpu,
+                 slot_mappings=slot_mappings,
++                use_cudagraphs=use_drafter_cudagraphs,
+             )
+ 
+         return draft_token_ids
+--- a/vllm/v1/spec_decode/llm_base_proposer.py
++++ b/vllm/v1/spec_decode/llm_base_proposer.py
+@@ -426,6 +426,7 @@
+         slot_mappings: dict[str, torch.Tensor]
+         | list[dict[str, torch.Tensor]]
+         | None = None,
++        use_cudagraphs: bool = True,
+     ) -> torch.Tensor:
+         batch_size = common_attn_metadata.batch_size()
+ 
+@@ -460,7 +461,9 @@
+         )
+ 
+         cudagraph_runtime_mode, num_input_tokens, num_tokens_across_dp = (
+-            self._determine_batch_execution_and_padding(num_tokens)
++            self._determine_batch_execution_and_padding(
++                num_tokens, use_cudagraphs=use_cudagraphs
++            )
+         )
+ 
+         model_kwargs, slot_mapping_size = self.build_model_inputs_first_pass(

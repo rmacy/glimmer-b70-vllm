@@ -1,0 +1,188 @@
+--- a/vllm/model_executor/models/onyx_mm.py
++++ b/vllm/model_executor/models/onyx_mm.py
+@@ -78,21 +78,23 @@
+ class OnyxImagePixelInputs(TensorSchema):
+     """Pre-processed image pixels for the Onyx vision tower.
+ 
+-    Onyx keeps pixel_values as a Python list of variable-shape tensors,
+-    one per input image (shape [3, H, W] where H/W depend on
+-    `image_processor.compute_image_size(...)` for the actual image).
++    The official MuseGlimmerImageProcessor emits a flat patch matrix plus
++    one (temporal, height, width) grid row per image.
+     """
+ 
+     type: Literal["pixel_values"] = "pixel_values"
+ 
+-    # A list of tensors — TensorSchema supports this via a dynamic-dims
+-    # batch dimension; we just carry the list through.
+     pixel_values: Annotated[
+-        list[torch.Tensor] | torch.Tensor,
+-        TensorShape("bn", 3, "h", "w", dynamic_dims={"h", "w"}),
++        torch.Tensor,
++        TensorShape("np", "ctps"),
+     ]
+ 
++    image_grid_thw: Annotated[
++        torch.Tensor,
++        TensorShape("ni", 3),
++    ]
+ 
++
+ # --------------------------------------------------------------------------- #
+ # Vision tower — direct port of day0_model/hf/modeling_onyx.py                #
+ # --------------------------------------------------------------------------- #
+@@ -272,36 +274,51 @@
+             offset += s
+         return mask
+ 
+-    def encode_one(self, img: torch.Tensor) -> torch.Tensor:
++    def encode_one(
++        self,
++        img: torch.Tensor,
++        grid_thw: torch.Tensor | None = None,
++    ) -> torch.Tensor:
+         """Encode a single image and return [n_downsampled_tokens, vision_output_dim]."""
+         device = self.conv1_linear.weight.device
+         dtype = self.conv1_linear.weight.dtype
+         ps = self.patch_size
+         sf = self.sparse_attention_factor
+ 
+-        img = img.to(device=device, dtype=dtype)
+-        if img.ndim == 3:
+-            img = img.unsqueeze(0)
+-        _, c, h, w = img.shape
+-        grid_h, grid_w = h // ps, w // ps
+-        n_tokens = grid_h * grid_w
+-        if c == 3:
+-            patches = img.unfold(2, ps, ps).unfold(3, ps, ps)
+-            patches = patches.contiguous().view(1, c, grid_h, grid_w, ps, ps)
+-            patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
+-            patches = patches.unsqueeze(3).expand(
+-                -1, -1, -1, self.patch_temporal, -1, -1, -1
++        if grid_thw is not None:
++            grid_t, grid_h, grid_w = (int(v) for v in grid_thw.tolist())
++            if grid_t != 1:
++                raise ValueError(f"Onyx image input requires grid_t=1, got {grid_t}")
++            patches = img.to(device=device, dtype=dtype).reshape(
++                1, grid_h * grid_w, -1
+             )
+         else:
+-            frame_patches = []
+-            for t in range(self.patch_temporal):
+-                frame = img[:, t * 3 : (t + 1) * 3]
+-                fp = frame.unfold(2, ps, ps).unfold(3, ps, ps)
+-                fp = fp.contiguous().view(1, 3, grid_h, grid_w, ps, ps)
+-                fp = fp.permute(0, 2, 3, 1, 4, 5).contiguous()
+-                frame_patches.append(fp)
+-            patches = torch.stack(frame_patches, dim=3)
+-        patches = patches.reshape(1, n_tokens, -1)
++            # Compatibility with the day-zero raw-CHW processor.
++            img = img.to(device=device, dtype=dtype)
++            if img.ndim == 3:
++                img = img.unsqueeze(0)
++            _, c, h, w = img.shape
++            grid_h, grid_w = h // ps, w // ps
++            n_tokens = grid_h * grid_w
++            if c == 3:
++                patches = img.unfold(2, ps, ps).unfold(3, ps, ps)
++                patches = patches.contiguous().view(
++                    1, c, grid_h, grid_w, ps, ps
++                )
++                patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
++                patches = patches.unsqueeze(3).expand(
++                    -1, -1, -1, self.patch_temporal, -1, -1, -1
++                )
++            else:
++                frame_patches = []
++                for t in range(self.patch_temporal):
++                    frame = img[:, t * 3 : (t + 1) * 3]
++                    fp = frame.unfold(2, ps, ps).unfold(3, ps, ps)
++                    fp = fp.contiguous().view(1, 3, grid_h, grid_w, ps, ps)
++                    fp = fp.permute(0, 2, 3, 1, 4, 5).contiguous()
++                    frame_patches.append(fp)
++                patches = torch.stack(frame_patches, dim=3)
++            patches = patches.reshape(1, n_tokens, -1)
+ 
+         x = self.conv1_linear(patches)
+         pos_emb = self._get_pos_emb(grid_h, grid_w, device)
+@@ -366,8 +383,11 @@
+ 
+     def _n_tokens_for_image(self, image_width: int, image_height: int) -> int:
+         proc = self.get_hf_processor()
+-        _, _, n = proc.image_processor.compute_image_size(image_width, image_height)
+-        return n
++        image_processor = proc.image_processor
++        num_patches = image_processor.get_number_of_image_patches(
++            image_height, image_width, {}
++        )
++        return num_patches // image_processor.merge_size**2
+ 
+ 
+ class OnyxMultiModalProcessor(BaseMultiModalProcessor[OnyxProcessingInfo]):
+@@ -399,9 +419,16 @@
+         hf_inputs: BatchFeature,
+         hf_processor_mm_kwargs: Mapping[str, object],
+     ) -> Mapping[str, MultiModalFieldConfig]:
+-        # OnyxProcessor returns a Python list of variable-shape tensors —
+-        # one per image. Batched field keeps them aligned with mm items.
+-        return dict(pixel_values=MultiModalFieldConfig.batched("image"))
++        image_grid_thw = hf_inputs.get("image_grid_thw", torch.empty((0, 3)))
++        image_pixel_grid_sizes = image_grid_thw.prod(-1)
++        return dict(
++            pixel_values=MultiModalFieldConfig.flat_from_sizes(
++                "image", image_pixel_grid_sizes
++            ),
++            image_grid_thw=MultiModalFieldConfig.batched(
++                "image", keep_on_cpu=True
++            ),
++        )
+ 
+     def _get_prompt_updates(
+         self,
+@@ -595,31 +622,29 @@
+ 
+     def _parse_and_validate_image_input(self, **kwargs) -> OnyxImagePixelInputs | None:
+         pixel_values = kwargs.pop("pixel_values", None)
++        image_grid_thw = kwargs.pop("image_grid_thw", None)
+         if pixel_values is None:
+             return None
+-        # `batched("image")` in the field-config gives us either a list, a
+-        # tuple, or a nested list depending on batching internals. Flatten
+-        # any one-level nesting so we always end up with a list[Tensor],
+-        # one entry per image.
+-        if isinstance(pixel_values, torch.Tensor):
+-            # shape [N, 3, H, W] — split back into per-image tensors.
+-            pixel_values = [pixel_values[i] for i in range(pixel_values.shape[0])]
+-        elif (
+-            isinstance(pixel_values, (list, tuple))
+-            and pixel_values
+-            and isinstance(pixel_values[0], (list, tuple))
+-        ):
+-            pixel_values = [t for sub in pixel_values for t in sub]
+-        return OnyxImagePixelInputs(pixel_values=list(pixel_values))
++        if image_grid_thw is None:
++            raise ValueError(
++                "image_grid_thw is required with official Muse pixel_values"
++            )
++        return OnyxImagePixelInputs(
++            pixel_values=pixel_values,
++            image_grid_thw=image_grid_thw,
++        )
+ 
+     def _process_image_input(
+         self, image_input: OnyxImagePixelInputs
+     ) -> list[torch.Tensor]:
+-        images: list[torch.Tensor] = image_input["pixel_values"]  # type: ignore[assignment]
++        pixel_values = image_input["pixel_values"]
++        image_grid_thw = image_input["image_grid_thw"]
++        patch_counts = image_grid_thw.prod(-1).tolist()
++        images = pixel_values.split(patch_counts)
+         target_dtype = self.vision_projection.weight.dtype
+         per_image: list[torch.Tensor] = []
+-        for img in images:
+-            feats = self.vision_encoder.encode_one(img)          # [N_tok, vis_out]
++        for img, grid_thw in zip(images, image_grid_thw, strict=True):
++            feats = self.vision_encoder.encode_one(img, grid_thw)
+             feats = self.vision_adapter(feats)                   # [N_tok, adapter]
+             feats = self.vision_projection(feats)                # [N_tok, hidden]
+             if self.perception_emb_norm is not None:

@@ -1,0 +1,109 @@
+--- a/vllm/model_executor/models/onyx_mm.py
++++ b/vllm/model_executor/models/onyx_mm.py
+@@ -131,7 +131,14 @@
+         self.v_proj = nn.Linear(dim, n_heads * head_dim, bias=True)
+         self.o_proj = nn.Linear(n_heads * head_dim, dim, bias=True)
+ 
+-    def forward(self, x, slen, freqs_cis=None, attn_bias=None):
++    def forward(
++        self,
++        x,
++        slen,
++        freqs_cis=None,
++        attn_bias=None,
++        chunk_lengths: list[int] | None = None,
++    ):
+         bs_slen, d = x.shape
+         bs = bs_slen // slen
+         xq = self.q_proj(x).view(bs, slen, self.n_heads, self.head_dim)
+@@ -140,10 +147,36 @@
+         if freqs_cis is not None:
+             xq = _apply_rotary_emb(xq, freqs_cis)
+             xk = _apply_rotary_emb(xk, freqs_cis)
+-        out = F.scaled_dot_product_attention(
+-            xq.transpose(1, 2), xk.transpose(1, 2), xv.transpose(1, 2),
+-            attn_mask=attn_bias,
+-        )
++        query = xq.transpose(1, 2)
++        key = xk.transpose(1, 2)
++        value = xv.transpose(1, 2)
++        if chunk_lengths:
++            # The official non-FlashAttention implementation evaluates each
++            # local vision window independently. A dense block-diagonal mask
++            # is semantically equivalent, but forces XPU SDPA to materialize
++            # an O(total_patches^2) attention workspace and can exhaust a B70
++            # on otherwise valid images. Splitting restores the official
++            # bounded-memory behavior without changing weights or attention.
++            lengths = [int(length) for length in chunk_lengths]
++            if sum(lengths) != slen:
++                raise ValueError(
++                    "Vision attention chunk lengths must cover the sequence: "
++                    f"sum={sum(lengths)} slen={slen}"
++                )
++            split_q = torch.split(query, lengths, dim=2)
++            split_k = torch.split(key, lengths, dim=2)
++            split_v = torch.split(value, lengths, dim=2)
++            out = torch.cat(
++                [
++                    F.scaled_dot_product_attention(q, k, v)
++                    for q, k, v in zip(split_q, split_k, split_v)
++                ],
++                dim=2,
++            )
++        else:
++            out = F.scaled_dot_product_attention(
++                query, key, value, attn_mask=attn_bias
++            )
+         out = out.transpose(1, 2).contiguous().view(bs_slen, -1)
+         return self.o_proj(out)
+ 
+@@ -166,11 +199,24 @@
+         self.ln_2 = nn.LayerNorm(dim)
+         self.mlp = OnyxVisionMLP(dim, mlp_hidden)
+ 
+-    def forward(self, x, slen, freqs_cis=None, attn_bias=None):
++    def forward(
++        self,
++        x,
++        slen,
++        freqs_cis=None,
++        attn_bias=None,
++        chunk_lengths: list[int] | None = None,
++    ):
+         bs, s, d = x.shape
+         flat = x.view(bs * s, d)
+         h = self.ln_1(flat)
+-        h = self.attn(h, slen=s, freqs_cis=freqs_cis, attn_bias=attn_bias)
++        h = self.attn(
++            h,
++            slen=s,
++            freqs_cis=freqs_cis,
++            attn_bias=attn_bias,
++            chunk_lengths=chunk_lengths,
++        )
+         flat = flat + h
+         h = self.ln_2(flat)
+         h = self.mlp(h)
+@@ -345,15 +391,18 @@
+             freqs_cis = tuple(freqs[sp_perm] for freqs in freqs_cis)
+ 
+         total_tokens = x.shape[1]
+-        sp_mask = (
+-            self._make_block_diag_mask(sp_slens, device) if sp_slens else None
+-        )
+         for i, block in enumerate(self.transformer):
+             is_global = (i == len(self.transformer) - 1) or ((i + 1) % sf == 0)
+             if is_global or not sp_slens:
+                 x = block(x, slen=total_tokens, freqs_cis=freqs_cis, attn_bias=None)
+             else:
+-                x = block(x, slen=total_tokens, freqs_cis=freqs_cis, attn_bias=sp_mask)
++                x = block(
++                    x,
++                    slen=total_tokens,
++                    freqs_cis=freqs_cis,
++                    attn_bias=None,
++                    chunk_lengths=sp_slens,
++                )
+ 
+         if sp_perm is not None:
+             inv_perm = torch.empty_like(sp_perm)

@@ -1,0 +1,53 @@
+--- a/vllm/v1/spec_decode/llm_base_proposer.py
++++ b/vllm/v1/spec_decode/llm_base_proposer.py
+@@ -392,6 +392,15 @@
+         This should be called after adjust_cudagraph_sizes_for_spec_decode.
+         """
+         if (
++            self.method == "dflash"
++            and not self.speculative_config.enforce_eager
++            and cudagraph_mode != CUDAGraphMode.NONE
++        ):
++            # DFlash has a fixed one-pass query block and its own dispatcher.
++            # Keep PIECEWISE graph keys even when the target deliberately uses
++            # FULL_DECODE_ONLY so long-context target prefills remain eager.
++            eagle_cudagraph_mode = CUDAGraphMode.PIECEWISE
++        elif (
+             not self.speculative_config.enforce_eager
+             and cudagraph_mode.mixed_mode()
+             in [CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL]
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -6285,8 +6285,32 @@
+                 self._capture_cudagraphs(
+                     batch_descriptors=batch_descs,
+                     cudagraph_runtime_mode=runtime_mode,
++                )
++                torch.accelerator.synchronize()
++
++            if (
++                isinstance(self.drafter, DFlashProposer)
++                and self.compilation_config.cudagraph_mode
++                == CUDAGraphMode.FULL_DECODE_ONLY
++                and not self.speculative_config.enforce_eager
++            ):
++                # The target has no mixed/prefill graphs in this mode. Capture
++                # the DFlash dispatcher's fixed 16-position PIECEWISE graph
++                # independently so target prefills stay eager while assistant
++                # steady-state compute still avoids per-kernel host launches.
++                dflash_tokens = self.drafter.max_query_tokens
++                self.drafter.dummy_run(
++                    dflash_tokens,
++                    use_cudagraphs=False,
++                    is_graph_capturing=False,
+                 )
+                 torch.accelerator.synchronize()
++                self.drafter.dummy_run(
++                    dflash_tokens,
++                    use_cudagraphs=True,
++                    is_graph_capturing=True,
++                )
++                torch.accelerator.synchronize()
+ 
+             # Capture encoder CUDA graphs if enabled
+             if self.encoder_cudagraph_manager is not None:

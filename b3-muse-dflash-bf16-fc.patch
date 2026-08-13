@@ -1,0 +1,25 @@
+--- a/vllm/model_executor/models/qwen3_dflash.py
++++ b/vllm/model_executor/models/qwen3_dflash.py
+@@ -378,10 +378,21 @@
+                 fc_input_size = self.config.hidden_size * num_features_to_use
++            # The auxiliary projection is a single very wide replicated
++            # matrix. Per-tensor online FP8 gives all 221M weights one scale,
++            # which can erase proposal quality even though target verification
++            # remains exact. Allow this one official weight tensor to remain in
++            # its source precision while every target weight and all DFlash
++            # transformer projections retain native FP8 execution.
++            fc_quant_config = (
++                None
++                if os.environ.get("VLLM_MUSE_DFLASH_BF16_FC", "0") == "1"
++                else self.quant_config
++            )
+             self.fc = ReplicatedLinear(
+                 input_size=fc_input_size,
+                 output_size=self.config.hidden_size,
+                 bias=False,
+                 params_dtype=vllm_config.model_config.dtype,
+-                quant_config=self.quant_config,
++                quant_config=fc_quant_config,
+                 prefix=maybe_prefix(prefix, "fc"),
+                 return_bias=False,
+             )

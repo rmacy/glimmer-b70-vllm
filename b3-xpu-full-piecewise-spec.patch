@@ -1,0 +1,10 @@
+--- a/vllm/platforms/xpu.py
++++ b/vllm/platforms/xpu.py
+@@ -264,6 +264,7 @@ class XPUPlatform(Platform):
+                     CUDAGraphMode.NONE,
+                     CUDAGraphMode.PIECEWISE,
+                     CUDAGraphMode.FULL_DECODE_ONLY,
++                    CUDAGraphMode.FULL_AND_PIECEWISE,
+                 }
+             ):
+                 compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE

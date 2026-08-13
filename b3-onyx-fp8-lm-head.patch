@@ -1,0 +1,47 @@
+--- a/vllm/model_executor/layers/quantization/fp8.py
++++ b/vllm/model_executor/layers/quantization/fp8.py
+@@ -204,5 +204,30 @@
+                 offline_method.marlin_input_dtype = get_marlin_input_dtype(prefix)
+                 return offline_method
++        # ParallelLMHead is vocab-parallel rather than a LinearBase, so the
++        # stock FP8 dispatcher leaves it in model dtype.  Glimmer evaluates
++        # the shared target head twice per DFlash cycle (draft + target), which
++        # makes that omission a measured decode bottleneck.  Opt in only for
++        # online FP8 Glimmer images: load the official FP16 checkpoint shard,
++        # preserve every row, and materialize it as FP8 plus its floating-point
++        # scale through the same XPU W8A16 method as the target projections.
++        elif not self.is_checkpoint_fp8_serialized:
++            import os
++
++            if os.environ.get("VLLM_ONYX_FP8_LM_HEAD", "0") == "1":
++                from vllm.model_executor.layers.vocab_parallel_embedding import (
++                    ParallelLMHead,
++                )
++
++                if isinstance(layer, ParallelLMHead):
++                    if is_layer_skipped(
++                        prefix=prefix,
++                        ignored_layers=self.ignored_layers,
++                        fused_mapping=self.packed_modules_mapping,
++                    ):
++                        return None
++                    online_method = Fp8OnlineLinearMethod(self)
++                    online_method.marlin_input_dtype = get_marlin_input_dtype(prefix)
++                    return online_method
+         elif isinstance(layer, FusedMoE):
+             if is_layer_skipped(
+                 prefix=prefix,
+--- a/vllm/model_executor/models/onyx.py
++++ b/vllm/model_executor/models/onyx.py
+@@ -963,8 +963,9 @@
+         return self.model(input_ids, positions, intermediate_tensors, inputs_embeds)
+ 
+     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
+-        # Ensure hidden_states dtype matches lm_head.weight dtype (bf16).
+-        hidden_states = hidden_states.to(self.lm_head.weight.dtype)
++        # Keep activations in the configured model dtype.  A native FP8 head
++        # stores FP8 weights but its XPU W8A16 method consumes FP16 activations;
++        # casting activations to the weight dtype would violate that contract.
+         return self.logits_processor(self.lm_head, hidden_states)
+ 
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:

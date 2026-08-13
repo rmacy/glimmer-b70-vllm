@@ -1,0 +1,27 @@
+--- a/vllm/v1/spec_decode/dflash.py
++++ b/vllm/v1/spec_decode/dflash.py
+@@ -164,10 +164,18 @@
+     @override
+     def _create_draft_vllm_config(self) -> VllmConfig:
+         base = super()._create_draft_vllm_config()
++        draft_compilation_config = replace(
++            base.compilation_config,
++            cudagraph_mode=CUDAGraphMode.PIECEWISE,
++        )
++        # CompilationConfig.static_forward_context is init=False, so vLLM's
++        # replace() intentionally creates a fresh empty registry. Target and
++        # DFlash attention layers must remain in the same registry for shared
++        # KV-cache discovery and unified_kv_cache_update during graph capture.
++        draft_compilation_config.static_forward_context = (
++            base.compilation_config.static_forward_context
++        )
+         return replace(
+             base,
+-            compilation_config=replace(
+-                base.compilation_config,
+-                cudagraph_mode=CUDAGraphMode.PIECEWISE,
+-            ),
++            compilation_config=draft_compilation_config,
+             attention_config=replace(
+                 base.attention_config,
+                 use_non_causal=True,

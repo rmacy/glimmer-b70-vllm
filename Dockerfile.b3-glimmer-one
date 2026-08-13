@@ -1,0 +1,171 @@
+# syntax=docker/dockerfile:1.7
+
+# One reproducible production image for full-parameter FP8 Muse Glimmer on two
+# Intel Arc Pro B70 GPUs. Model weights are intentionally downloaded and
+# mounted separately; this image contains only the runtime implementation.
+ARG BASE_IMAGE=intel/llm-scaler-vllm@sha256:7a526dcfc49c77afeabf77e2e2a41a9a0221126580d144d2d1a15e320befb210
+FROM ${BASE_IMAGE}
+
+ARG TRANSFORMERS_COMMIT=fe95f5423d65951cf63055d519dd7fa5ae12eb8d
+
+ENV http_proxy= \
+    https_proxy= \
+    HTTP_PROXY= \
+    HTTPS_PROXY= \
+    ALL_PROXY= \
+    all_proxy= \
+    VLLM_ONYX_FP8_LM_HEAD=1 \
+    VLLM_MUSE_DFLASH_FP8=1 \
+    VLLM_MUSE_DFLASH_BF16_FC=1 \
+    VLLM_XPU_ENABLE_XPU_GRAPH=1 \
+    DISABLE_ESIMD_GEMV=1 \
+    DISABLE_ESIMD_GEMM=1 \
+    MODEL_PATH=/models/muse-glimmer-30b-bf16 \
+    ASSISTANT_PATH=/models/muse-glimmer-30b-assistant-official \
+    PARSER_PATH=/opt/glimmer/muse_glimmer_vllm_parser.py \
+    PORT=8000 \
+    WEIGHT_PRECISION=fp8 \
+    TP_SIZE=2 \
+    GPU_UTIL=0.72 \
+    MAX_MODEL_LEN=131072 \
+    MAX_BATCHED_TOKENS=4096 \
+    MAX_NUM_SEQS=1 \
+    BLOCK_SIZE=64 \
+    ENFORCE_EAGER=0 \
+    ASYNC_SCHEDULING=auto
+
+# Pin the official Transformers revision that registers Muse Glimmer and its
+# multimodal processor. --no-deps preserves Intel's tested runtime dependency
+# set from the base image.
+RUN python -m pip install --no-cache-dir --no-deps \
+      "https://github.com/huggingface/transformers/archive/${TRANSFORMERS_COMMIT}.tar.gz" \
+    && python - <<'PY'
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+from transformers.models.auto.processing_auto import PROCESSOR_MAPPING_NAMES
+
+assert "muse_glimmer" in CONFIG_MAPPING
+assert "muse_glimmer" in PROCESSOR_MAPPING_NAMES
+PY
+
+# Copy only the ordered production patches. Experimental per-channel, ESIMD,
+# tail-rebase, and generic-backend branches are deliberately excluded.
+COPY b3-onyx-official-processor.patch \
+     b3-onyx-official-vision-semantics.patch \
+     b3-onyx-text-rope-semantics.patch \
+     b3-xpu-spec-decode.patch \
+     b3-onyx-fp8-lm-head.patch \
+     b3-muse-dflash-fp8.patch \
+     b3-multimodal-cudagraph-guard.patch \
+     b3-xpu-full-piecewise-spec.patch \
+     b3-xpu-piecewise-allreduce-split.patch \
+     b3-dflash-first-pass-eager.patch \
+     b3-dflash-independent-piecewise-graph.patch \
+     b3-dflash-piecewise-compile-config.patch \
+     b3-dflash-shared-forward-context.patch \
+     b3-dflash-capture-with-target-slots.patch \
+     b3-dflash-full-decode-graph.patch \
+     b3-dflash-full-and-piecewise-compile.patch \
+     b3-dflash-local-argmax.patch \
+     b3-dflash-text-decode-graph.patch \
+     b3-dflash-install-full-graph-wrapper.patch \
+     b3-dflash-stable-graph-metadata.patch \
+     b3-dflash-stable-graph-bounds.patch \
+     b3-dflash-valid-dummy-attention.patch \
+     b3-muse-dflash-bf16-fc.patch \
+     b3-onyx-vision-varlen-attention.patch \
+     /tmp/glimmer-patches/
+
+COPY test_b3_muse_dflash_local_argmax.py \
+     test_b3_dflash_text_decode_graph.py \
+     test_b3_dflash_install_full_graph_wrapper.py \
+     test_b3_dflash_stable_graph_metadata.py \
+     test_b3_dflash_stable_graph_bounds.py \
+     test_b3_dflash_valid_dummy_attention.py \
+     test_b3_muse_dflash_bf16_fc.py \
+     test_b3_onyx_vision_varlen_attention.py \
+     /tmp/glimmer-tests/
+
+# Apply the same production patch order as the previously validated layered
+# build, then compile every modified module and run the patch-specific tests.
+RUN set -eux; \
+    cd /opt/venv/lib/python3.12/site-packages; \
+    apply_patch_file() { \
+      patch -p1 --forward --batch < "/tmp/glimmer-patches/$1"; \
+    }; \
+    apply_patch_file b3-onyx-official-processor.patch; \
+    apply_patch_file b3-onyx-official-vision-semantics.patch; \
+    apply_patch_file b3-onyx-text-rope-semantics.patch; \
+    apply_patch_file b3-xpu-spec-decode.patch; \
+    apply_patch_file b3-onyx-fp8-lm-head.patch; \
+    apply_patch_file b3-muse-dflash-fp8.patch; \
+    apply_patch_file b3-multimodal-cudagraph-guard.patch; \
+    apply_patch_file b3-xpu-full-piecewise-spec.patch; \
+    apply_patch_file b3-xpu-piecewise-allreduce-split.patch; \
+    apply_patch_file b3-dflash-first-pass-eager.patch; \
+    apply_patch_file b3-dflash-independent-piecewise-graph.patch; \
+    apply_patch_file b3-dflash-piecewise-compile-config.patch; \
+    apply_patch_file b3-dflash-shared-forward-context.patch; \
+    apply_patch_file b3-dflash-capture-with-target-slots.patch; \
+    apply_patch_file b3-dflash-full-decode-graph.patch; \
+    apply_patch_file b3-dflash-full-and-piecewise-compile.patch; \
+    apply_patch_file b3-dflash-local-argmax.patch; \
+    python /tmp/glimmer-tests/test_b3_muse_dflash_local_argmax.py; \
+    apply_patch_file b3-dflash-text-decode-graph.patch; \
+    python /tmp/glimmer-tests/test_b3_dflash_text_decode_graph.py; \
+    apply_patch_file b3-dflash-install-full-graph-wrapper.patch; \
+    python /tmp/glimmer-tests/test_b3_dflash_install_full_graph_wrapper.py; \
+    apply_patch_file b3-dflash-stable-graph-metadata.patch; \
+    python /tmp/glimmer-tests/test_b3_dflash_stable_graph_metadata.py; \
+    apply_patch_file b3-dflash-stable-graph-bounds.patch; \
+    python /tmp/glimmer-tests/test_b3_dflash_stable_graph_bounds.py; \
+    apply_patch_file b3-dflash-valid-dummy-attention.patch; \
+    python /tmp/glimmer-tests/test_b3_dflash_valid_dummy_attention.py; \
+    apply_patch_file b3-muse-dflash-bf16-fc.patch; \
+    python /tmp/glimmer-tests/test_b3_muse_dflash_bf16_fc.py; \
+    apply_patch_file b3-onyx-vision-varlen-attention.patch; \
+    python /tmp/glimmer-tests/test_b3_onyx_vision_varlen_attention.py; \
+    python -m py_compile \
+      vllm/model_executor/layers/quantization/fp8.py \
+      vllm/model_executor/models/onyx.py \
+      vllm/model_executor/models/onyx_mm.py \
+      vllm/model_executor/models/qwen3_dflash.py \
+      vllm/platforms/xpu.py \
+      vllm/v1/spec_decode/dflash.py \
+      vllm/v1/spec_decode/llm_base_proposer.py \
+      vllm/v1/worker/gpu_model_runner.py \
+      vllm_xpu_kernels/flash_attn_interface.py; \
+    rm -rf /tmp/glimmer-patches /tmp/glimmer-tests
+
+# Fail the build if model registration or the final production controls drift.
+RUN python - <<'PY'
+from pathlib import Path
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+from vllm import ModelRegistry
+
+site = Path("/opt/venv/lib/python3.12/site-packages")
+runner = (site / "vllm/v1/worker/gpu_model_runner.py").read_text()
+draft = (site / "vllm/v1/spec_decode/dflash.py").read_text()
+vision = (site / "vllm/model_executor/models/onyx_mm.py").read_text()
+
+assert "muse_glimmer" in CONFIG_MAPPING
+assert "OnyxForConditionalGeneration" in ModelRegistry.models
+assert "DFlashMuseGlimmerAssistantModel" in ModelRegistry.models
+assert "is_multimodal" in runner
+assert "dummy_common_attn_metadata" in draft
+assert "chunk_lengths=sp_slens" in vision
+print("native_glimmer=True dflash=True bounded_vision=True")
+PY
+
+COPY muse_glimmer_vllm_parser.py serve-glimmer.sh /opt/glimmer/
+
+RUN chmod 0755 /opt/glimmer/serve-glimmer.sh \
+    && python -m py_compile /opt/glimmer/muse_glimmer_vllm_parser.py
+
+EXPOSE 8000
+
+LABEL org.opencontainers.image.title="Muse Glimmer 30B for Intel Arc Pro B70" \
+      org.opencontainers.image.description="Consolidated native Intel-vLLM runtime: full-parameter FP8 target, official DFlash, 131K context, tools, and bounded-memory vision" \
+      org.opencontainers.image.base.name="intel/llm-scaler-vllm@sha256:7a526dcfc49c77afeabf77e2e2a41a9a0221126580d144d2d1a15e320befb210" \
+      org.opencontainers.image.revision="fe95f5423d65951cf63055d519dd7fa5ae12eb8d"
+
+ENTRYPOINT ["/opt/glimmer/serve-glimmer.sh"]
