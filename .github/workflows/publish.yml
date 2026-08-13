@@ -46,18 +46,14 @@ jobs:
           provenance: false
           sbom: false
 
-      - name: Make the package public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify anonymous pull
         shell: bash
         run: |
-          for attempt in 1 2 3 4 5; do
-            if gh api \
-              --method PATCH \
-              /user/packages/container/glimmer-b70-vllm \
-              -f visibility=public; then
-              exit 0
-            fi
-            sleep 5
-          done
-          exit 1
+          scope="repository:${GITHUB_REPOSITORY_OWNER}/glimmer-b70-vllm:pull"
+          token=$(curl -fsS "https://ghcr.io/token?scope=${scope}" | jq -r .token)
+          test -n "${token}"
+          curl -fsS \
+            -o /dev/null \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/${GITHUB_REPOSITORY_OWNER}/glimmer-b70-vllm/manifests/${{ steps.version.outputs.value }}"
