@@ -57,14 +57,14 @@ The same release is published to GitHub Container Registry and Google Artifact
 Registry:
 
 ```text
-ghcr.io/rmacy/glimmer-b70-vllm:0.1.3
-us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.3
+ghcr.io/rmacy/glimmer-b70-vllm:0.1.4
+us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.4
 ```
 
 ## Run the prebuilt image
 
 ```bash
-docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.3
+docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.4
 
 docker run --rm --name muse-glimmer \
   --device /dev/dri \
@@ -73,7 +73,7 @@ docker run --rm --name muse-glimmer \
   --shm-size 32g \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/models:/models:ro" \
-  ghcr.io/rmacy/glimmer-b70-vllm:0.1.3
+  ghcr.io/rmacy/glimmer-b70-vllm:0.1.4
 ```
 
 Health and model checks:
@@ -97,7 +97,7 @@ Omit `API_KEY` only for a deliberately unauthenticated, loopback-only service.
 ```bash
 docker build \
   -f Dockerfile.b3-glimmer-one \
-  -t glimmer-b70-vllm:0.1.3 .
+  -t glimmer-b70-vllm:0.1.4 .
 ```
 
 The Dockerfile pins both the Intel base-image digest and the Transformers

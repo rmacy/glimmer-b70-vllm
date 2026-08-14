@@ -7,6 +7,14 @@ ARG BASE_IMAGE=intel/llm-scaler-vllm@sha256:7a526dcfc49c77afeabf77e2e2a41a9a0221
 FROM ${BASE_IMAGE}
 
 ARG TRANSFORMERS_COMMIT=fe95f5423d65951cf63055d519dd7fa5ae12eb8d
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-137.137
+
+# Replace the vulnerable userspace Linux headers inherited from the pinned
+# Intel base without changing the running kernel, XPU driver, or vLLM stack.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --only-upgrade \
+      "linux-libc-dev=${LINUX_LIBC_DEV_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV http_proxy= \
     https_proxy= \
