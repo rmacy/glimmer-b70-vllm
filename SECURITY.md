@@ -24,9 +24,14 @@ unchanged.
 The public source and release image contain no model checkpoint, credentials,
 private endpoints, personal paths, prompts, request logs, or private deployment
 identifiers. The pinned Intel base contains operating-system and language
-packages with published advisories. Keep the endpoint private, review current
-scan output, and rebase onto a newer Intel image after the Glimmer/XPU patch set
-has been revalidated there.
+packages with published advisories. The 2026-08-13 Trivy scan reported 18
+critical and 228 high matches: 16 critical matches were in the
+`linux-libc-dev` header package, and two were the version-matched vLLM
+authentication CVE whose backport is documented and regression-tested above.
+Containers use the host kernel rather than running a kernel from that header
+package, but this does not make every inherited finding irrelevant. Keep the
+endpoint private, review current scan output, and rebase onto a newer Intel
+image after the Glimmer/XPU patch set has been revalidated there.
 
 Report a suspected vulnerability through GitHub private vulnerability
 reporting. Do not include real API keys, prompts, model data, or private network
