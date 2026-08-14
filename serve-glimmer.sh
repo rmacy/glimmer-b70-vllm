@@ -47,7 +47,7 @@ args=(
   --model-impl "${MODEL_IMPL:-auto}"
   --dtype "${model_dtype}"
   --tensor-parallel-size "${TP_SIZE:-2}"
-  --gpu-memory-utilization "${GPU_UTIL:-0.72}"
+  --gpu-memory-utilization "${GPU_UTIL:-0.74}"
   --max-model-len "${MAX_MODEL_LEN:-131072}"
   --max-num-batched-tokens "${MAX_BATCHED_TOKENS:-4096}"
   --max-num-seqs "${MAX_NUM_SEQS:-1}"

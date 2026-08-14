@@ -37,6 +37,7 @@ jobs:
           grep -Fq 'release-workflow-placeholder' /tmp/glimmer-compose.yaml
           grep -Fq "glimmer-b70-vllm:${{ steps.version.outputs.value }}" \
             /tmp/glimmer-compose.yaml
+          grep -Fq 'GPU_UTIL: "0.74"' /tmp/glimmer-compose.yaml
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

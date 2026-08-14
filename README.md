@@ -22,10 +22,16 @@ across a 12-request approximately 126K exact-retrieval soak. The largest
 observed 32K run was 94.88 tok/s. Results depend on host drivers, thermals,
 prompt shape, and output distribution.
 
-The production defaults are TP=2, 131,072 model context, 4,096 batched prefill
-tokens, one active sequence, 0.72 GPU-memory utilization, 15 DFlash proposal
-tokens, XPU decode graphs, BF16 assistant auxiliary projection, and FP16
-activations around the FP8 weights.
+Those measurements used the selected 0.72 GPU-memory profile after its compile
+cache existed. Release 0.1.5 defaults to 0.74 so a first start with an empty
+compile cache also reserves enough KV memory for the complete 131,072-token
+context. This changes the memory reservation only; it does not change the
+weights, precision, context, DFlash path, graph mode, or batching profile.
+
+The published runtime defaults are TP=2, 131,072 model context, 4,096 batched
+prefill tokens, one active sequence, 0.74 GPU-memory utilization, 15 DFlash
+proposal tokens, XPU decode graphs, BF16 assistant auxiliary projection, and
+FP16 activations around the FP8 weights.
 
 ## Requirements
 
@@ -57,14 +63,14 @@ The same release is published to GitHub Container Registry and Google Artifact
 Registry:
 
 ```text
-ghcr.io/rmacy/glimmer-b70-vllm:0.1.4
-us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.4
+ghcr.io/rmacy/glimmer-b70-vllm:0.1.5
+us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.5
 ```
 
 ## Run the prebuilt image
 
 ```bash
-docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.4
+docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.5
 
 docker run --rm --name muse-glimmer \
   --device /dev/dri \
@@ -73,7 +79,7 @@ docker run --rm --name muse-glimmer \
   --shm-size 32g \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/models:/models:ro" \
-  ghcr.io/rmacy/glimmer-b70-vllm:0.1.4
+  ghcr.io/rmacy/glimmer-b70-vllm:0.1.5
 ```
 
 Health and model checks:
@@ -97,7 +103,7 @@ Omit `API_KEY` only for a deliberately unauthenticated, loopback-only service.
 ```bash
 docker build \
   -f Dockerfile.b3-glimmer-one \
-  -t glimmer-b70-vllm:0.1.4 .
+  -t glimmer-b70-vllm:0.1.5 .
 ```
 
 The Dockerfile pins both the Intel base-image digest and the Transformers
@@ -117,6 +123,11 @@ All important defaults can be overridden with environment variables:
 
 Reducing context, disabling official DFlash semantics, or using lower-bit
 weights is not part of the validated profile.
+
+Do not reduce `GPU_UTIL` until the image has passed a clean-cache start on your
+host. The measured profile used 0.72, but the first consolidated-image start
+needed 0.74; that setting passed both clean startup and the 1,792-by-1,792
+maximum-image gate at full context.
 
 ## Privacy and contents
 

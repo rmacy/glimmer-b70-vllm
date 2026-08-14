@@ -1,6 +1,6 @@
 services:
   glimmer:
-    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/glimmer-b70-vllm:${GLIMMER_TAG:-0.1.4}
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/glimmer-b70-vllm:${GLIMMER_TAG:-0.1.5}
     container_name: muse-glimmer
     restart: unless-stopped
     devices:
@@ -17,7 +17,7 @@ services:
       ZE_AFFINITY_MASK: "0,1"
       WEIGHT_PRECISION: fp8
       TP_SIZE: "2"
-      GPU_UTIL: "0.72"
+      GPU_UTIL: "0.74"
       MAX_MODEL_LEN: "131072"
       MAX_BATCHED_TOKENS: "4096"
       MAX_NUM_SEQS: "1"

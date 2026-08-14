@@ -23,6 +23,8 @@ grep -Fxq '<fp8>' <<<"${default_output}"
 grep -Fxq '<--tool-call-parser>' <<<"${default_output}"
 grep -Fxq '<muse_glimmer>' <<<"${default_output}"
 grep -Fxq '<--speculative-config>' <<<"${default_output}"
+grep -Fxq '<--gpu-memory-utilization>' <<<"${default_output}"
+grep -Fxq '<0.74>' <<<"${default_output}"
 
 secured_output=$(API_KEY=release-audit-placeholder run_launcher)
 grep -Fxq '<--api-key>' <<<"${secured_output}"

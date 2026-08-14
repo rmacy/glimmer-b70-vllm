@@ -23,7 +23,7 @@ unchanged.
 
 The public source and release image contain no model checkpoint, credentials,
 private endpoints, personal paths, prompts, request logs, or private deployment
-identifiers. Release 0.1.4 pins Ubuntu's fixed `linux-libc-dev`
+identifiers. Releases 0.1.4 and later pin Ubuntu's fixed `linux-libc-dev`
 6.8.0-137.137 package on top of the Intel base. A Trivy 0.73.0 scan of the clean
 release candidate on 2026-08-13 found zero secrets, two critical matches, and
 68 high matches. Both critical matches are duplicate version-based detections
