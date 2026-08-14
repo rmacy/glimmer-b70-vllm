@@ -36,3 +36,5 @@
 !test_b3_muse_dflash_bf16_fc.py
 !test_b3_onyx_vision_varlen_attention.py
 !test_auth_backport.py
+!test_muse_glimmer_parser.py
+!test_serve_glimmer_launcher.sh

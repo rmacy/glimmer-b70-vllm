@@ -111,22 +111,22 @@ RUN set -eux; \
     apply_patch_file b3-dflash-full-decode-graph.patch; \
     apply_patch_file b3-dflash-full-and-piecewise-compile.patch; \
     apply_patch_file b3-dflash-local-argmax.patch; \
-    python /tmp/glimmer-tests/test_b3_muse_dflash_local_argmax.py; \
     apply_patch_file b3-dflash-text-decode-graph.patch; \
-    python /tmp/glimmer-tests/test_b3_dflash_text_decode_graph.py; \
     apply_patch_file b3-dflash-install-full-graph-wrapper.patch; \
-    python /tmp/glimmer-tests/test_b3_dflash_install_full_graph_wrapper.py; \
     apply_patch_file b3-dflash-stable-graph-metadata.patch; \
-    python /tmp/glimmer-tests/test_b3_dflash_stable_graph_metadata.py; \
     apply_patch_file b3-dflash-stable-graph-bounds.patch; \
-    python /tmp/glimmer-tests/test_b3_dflash_stable_graph_bounds.py; \
     apply_patch_file b3-dflash-valid-dummy-attention.patch; \
-    python /tmp/glimmer-tests/test_b3_dflash_valid_dummy_attention.py; \
     apply_patch_file b3-muse-dflash-bf16-fc.patch; \
-    python /tmp/glimmer-tests/test_b3_muse_dflash_bf16_fc.py; \
     apply_patch_file b3-onyx-vision-varlen-attention.patch; \
-    python /tmp/glimmer-tests/test_b3_onyx_vision_varlen_attention.py; \
     apply_patch_file CVE-2026-48746-auth-bypass.patch; \
+    python /tmp/glimmer-tests/test_b3_muse_dflash_local_argmax.py; \
+    python /tmp/glimmer-tests/test_b3_dflash_text_decode_graph.py; \
+    python /tmp/glimmer-tests/test_b3_dflash_install_full_graph_wrapper.py; \
+    python /tmp/glimmer-tests/test_b3_dflash_stable_graph_metadata.py; \
+    python /tmp/glimmer-tests/test_b3_dflash_stable_graph_bounds.py; \
+    python /tmp/glimmer-tests/test_b3_dflash_valid_dummy_attention.py; \
+    python /tmp/glimmer-tests/test_b3_muse_dflash_bf16_fc.py; \
+    python /tmp/glimmer-tests/test_b3_onyx_vision_varlen_attention.py; \
     python /tmp/glimmer-tests/test_auth_backport.py; \
     python -m py_compile \
       vllm/entrypoints/openai/server_utils.py \
@@ -162,9 +162,13 @@ print("native_glimmer=True dflash=True bounded_vision=True")
 PY
 
 COPY muse_glimmer_vllm_parser.py serve-glimmer.sh /opt/glimmer/
+COPY test_muse_glimmer_parser.py test_serve_glimmer_launcher.sh /tmp/glimmer-runtime-tests/
 
 RUN chmod 0755 /opt/glimmer/serve-glimmer.sh \
-    && python -m py_compile /opt/glimmer/muse_glimmer_vllm_parser.py
+    && python -m py_compile /opt/glimmer/muse_glimmer_vllm_parser.py \
+    && python /tmp/glimmer-runtime-tests/test_muse_glimmer_parser.py \
+    && bash /tmp/glimmer-runtime-tests/test_serve_glimmer_launcher.sh \
+    && rm -rf /tmp/glimmer-runtime-tests
 
 EXPOSE 8000
 

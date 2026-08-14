@@ -34,17 +34,22 @@ activations around the FP8 weights.
 - Current Intel compute/runtime drivers compatible with the pinned base image
 - Approximately 75 GB for the official BF16 target and DFlash assistant, plus
   container storage
-- Access to Meta's official Hugging Face repositories and accepted terms
+- Access to Meta's official Hugging Face repositories and compliance with
+  their model license and usage policy
 
 Download the official checkpoints with a current Hugging Face CLI:
 
 ```bash
 mkdir -p models
 hf download meta-models/Muse-Glimmer-30B \
+  --revision f84ecc3a0ea984a4c04542a84269e3d065350a6e \
   --local-dir models/muse-glimmer-30b-bf16
 hf download meta-models/Muse-Glimmer-30B-assistant \
+  --revision 2c86316d689027b91123638739743fef1d425233 \
   --local-dir models/muse-glimmer-30b-assistant-official
 ```
+
+Those are the exact checkpoint revisions used for the published measurements.
 
 ## Published images
 
@@ -52,14 +57,14 @@ The same release is published to GitHub Container Registry and Google Artifact
 Registry:
 
 ```text
-ghcr.io/rmacy/glimmer-b70-vllm:0.1.2
-us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.2
+ghcr.io/rmacy/glimmer-b70-vllm:0.1.3
+us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.3
 ```
 
 ## Run the prebuilt image
 
 ```bash
-docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.2
+docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.3
 
 docker run --rm --name muse-glimmer \
   --device /dev/dri \
@@ -68,7 +73,7 @@ docker run --rm --name muse-glimmer \
   --shm-size 32g \
   -p 127.0.0.1:8000:8000 \
   -v "$PWD/models:/models:ro" \
-  ghcr.io/rmacy/glimmer-b70-vllm:0.1.2
+  ghcr.io/rmacy/glimmer-b70-vllm:0.1.3
 ```
 
 Health and model checks:
@@ -81,16 +86,18 @@ curl -fsS http://127.0.0.1:8000/v1/models
 For Compose:
 
 ```bash
-GHCR_OWNER=rmacy docker compose up -d
+GHCR_OWNER=rmacy API_KEY='replace-with-a-long-random-value' docker compose up -d
 docker compose logs -f glimmer
 ```
+
+Omit `API_KEY` only for a deliberately unauthenticated, loopback-only service.
 
 ## Build locally
 
 ```bash
 docker build \
   -f Dockerfile.b3-glimmer-one \
-  -t glimmer-b70-vllm:0.1.2 .
+  -t glimmer-b70-vllm:0.1.3 .
 ```
 
 The Dockerfile pins both the Intel base-image digest and the Transformers
