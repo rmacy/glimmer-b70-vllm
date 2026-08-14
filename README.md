@@ -4,6 +4,9 @@ Native Intel-vLLM runtime for Meta Muse Glimmer 30B on two 32 GiB Intel Arc
 Pro B70 GPUs. The image serves the complete 131,072-token context, official
 DFlash assistant, ATEM tool calls, and vision path.
 
+Read [SECURITY.md](SECURITY.md) before exposing the service. Release `0.1.1`
+adds the upstream fix for CVE-2026-48746 to the pinned Intel-vLLM base.
+
 The default target path is full-parameter FP8: every eligible linear weight is
 represented in eight-bit floating point with floating-point scales. This is
 not GGUF, pruning, distillation, or 4/5/6-bit quantization. Official BF16 target
@@ -42,21 +45,29 @@ hf download meta-models/Muse-Glimmer-30B-assistant \
   --local-dir models/muse-glimmer-30b-assistant-official
 ```
 
+## Published images
+
+The same release is published to GitHub Container Registry and Google Artifact
+Registry:
+
+```text
+ghcr.io/rmacy/glimmer-b70-vllm:0.1.1
+us-central1-docker.pkg.dev/home-504803/open-models/glimmer-b70-vllm:0.1.1
+```
+
 ## Run the prebuilt image
 
-Replace `<owner>` with the package owner shown on the GHCR package page:
-
 ```bash
-docker pull ghcr.io/<owner>/glimmer-b70-vllm:0.1.0
+docker pull ghcr.io/rmacy/glimmer-b70-vllm:0.1.1
 
 docker run --rm --name muse-glimmer \
   --device /dev/dri \
   -v /dev/dri/by-path:/dev/dri/by-path:ro \
   --ipc=host \
   --shm-size 32g \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   -v "$PWD/models:/models:ro" \
-  ghcr.io/<owner>/glimmer-b70-vllm:0.1.0
+  ghcr.io/rmacy/glimmer-b70-vllm:0.1.1
 ```
 
 Health and model checks:
@@ -69,7 +80,7 @@ curl -fsS http://127.0.0.1:8000/v1/models
 For Compose:
 
 ```bash
-GHCR_OWNER=<owner> docker compose up -d
+GHCR_OWNER=rmacy GLIMMER_TAG=0.1.1 docker compose up -d
 docker compose logs -f glimmer
 ```
 
@@ -78,7 +89,7 @@ docker compose logs -f glimmer
 ```bash
 docker build \
   -f Dockerfile.b3-glimmer-one \
-  -t glimmer-b70-vllm:0.1.0 .
+  -t glimmer-b70-vllm:0.1.1 .
 ```
 
 The Dockerfile pins both the Intel base-image digest and the Transformers
@@ -93,6 +104,7 @@ All important defaults can be overridden with environment variables:
 - `GPU_UTIL`, `MAX_MODEL_LEN`, `MAX_BATCHED_TOKENS`, and `MAX_NUM_SEQS`
 - `TP_SIZE`, `BLOCK_SIZE`, and `KV_CACHE_DTYPE`
 - `SPECULATIVE_CONFIG`, `COMPILATION_CONFIG`, and `DISABLE_SPECULATION`
+- `API_KEY` to enable vLLM's bearer-token authentication
 - `WEIGHT_PRECISION=fp8` or the BF16 rollback mode
 
 Reducing context, disabling official DFlash semantics, or using lower-bit
@@ -112,4 +124,3 @@ Official model pages:
 
 - https://huggingface.co/meta-models/Muse-Glimmer-30B
 - https://huggingface.co/meta-models/Muse-Glimmer-30B-assistant
-

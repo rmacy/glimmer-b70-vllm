@@ -60,6 +60,10 @@ args=(
   --reasoning-parser-plugin "${PARSER_PATH}"
 )
 
+if [[ -n "${API_KEY:-}" ]]; then
+  args+=(--api-key "${API_KEY}")
+fi
+
 if [[ "${LANGUAGE_MODEL_ONLY:-0}" == "1" ]]; then
   args+=(--language-model-only)
 fi

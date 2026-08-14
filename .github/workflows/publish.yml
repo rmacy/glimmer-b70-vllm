@@ -23,7 +23,7 @@ jobs:
         run: |
           value="${GITHUB_REF_NAME#v}"
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            value="0.1.0"
+            value="manual-${GITHUB_RUN_NUMBER}"
           fi
           printf 'value=%s\n' "${value}" >> "${GITHUB_OUTPUT}"
 

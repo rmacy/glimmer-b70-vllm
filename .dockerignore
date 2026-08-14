@@ -26,6 +26,7 @@
 !b3-dflash-valid-dummy-attention.patch
 !b3-muse-dflash-bf16-fc.patch
 !b3-onyx-vision-varlen-attention.patch
+!CVE-2026-48746-auth-bypass.patch
 !test_b3_muse_dflash_local_argmax.py
 !test_b3_dflash_text_decode_graph.py
 !test_b3_dflash_install_full_graph_wrapper.py
@@ -34,4 +35,4 @@
 !test_b3_dflash_valid_dummy_attention.py
 !test_b3_muse_dflash_bf16_fc.py
 !test_b3_onyx_vision_varlen_attention.py
-
+!test_auth_backport.py

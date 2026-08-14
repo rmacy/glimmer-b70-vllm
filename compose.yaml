@@ -12,7 +12,7 @@ services:
     ipc: host
     shm_size: 32gb
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       ZE_AFFINITY_MASK: "0,1"
       WEIGHT_PRECISION: fp8
@@ -30,4 +30,3 @@ services:
 
 volumes:
   glimmer-cache:
-

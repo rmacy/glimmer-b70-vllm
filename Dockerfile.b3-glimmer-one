@@ -73,6 +73,7 @@ COPY b3-onyx-official-processor.patch \
      b3-dflash-valid-dummy-attention.patch \
      b3-muse-dflash-bf16-fc.patch \
      b3-onyx-vision-varlen-attention.patch \
+     CVE-2026-48746-auth-bypass.patch \
      /tmp/glimmer-patches/
 
 COPY test_b3_muse_dflash_local_argmax.py \
@@ -83,6 +84,7 @@ COPY test_b3_muse_dflash_local_argmax.py \
      test_b3_dflash_valid_dummy_attention.py \
      test_b3_muse_dflash_bf16_fc.py \
      test_b3_onyx_vision_varlen_attention.py \
+     test_auth_backport.py \
      /tmp/glimmer-tests/
 
 # Apply the same production patch order as the previously validated layered
@@ -124,7 +126,10 @@ RUN set -eux; \
     python /tmp/glimmer-tests/test_b3_muse_dflash_bf16_fc.py; \
     apply_patch_file b3-onyx-vision-varlen-attention.patch; \
     python /tmp/glimmer-tests/test_b3_onyx_vision_varlen_attention.py; \
+    apply_patch_file CVE-2026-48746-auth-bypass.patch; \
+    python /tmp/glimmer-tests/test_auth_backport.py; \
     python -m py_compile \
+      vllm/entrypoints/openai/server_utils.py \
       vllm/model_executor/layers/quantization/fp8.py \
       vllm/model_executor/models/onyx.py \
       vllm/model_executor/models/onyx_mm.py \
@@ -165,6 +170,8 @@ EXPOSE 8000
 
 LABEL org.opencontainers.image.title="Muse Glimmer 30B for Intel Arc Pro B70" \
       org.opencontainers.image.description="Consolidated native Intel-vLLM runtime: full-parameter FP8 target, official DFlash, 131K context, tools, and bounded-memory vision" \
+      org.opencontainers.image.source="https://github.com/rmacy/glimmer-b70-vllm" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.base.name="intel/llm-scaler-vllm@sha256:7a526dcfc49c77afeabf77e2e2a41a9a0221126580d144d2d1a15e320befb210" \
       org.opencontainers.image.revision="fe95f5423d65951cf63055d519dd7fa5ae12eb8d"
 
